@@ -135,7 +135,6 @@ struct F0980pbpbanalysis {
   Configurable<int> cfgTrackIndexSelType{"cfgTrackIndexSelType", 1, "Index selection type"};
   Configurable<double> cMaxTiednSigmaPion{"cMaxTiednSigmaPion", 3.0, "Combined nSigma cut for Pion"};
 
-
   ConfigurableAxis massAxis{"massAxis", {400, 0.2, 2.2}, "Invariant mass axis"};
   ConfigurableAxis ptAxis{"ptAxis", {VARIABLE_WIDTH, 0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.8, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0, 6.0, 7.0, 8.0, 10.0, 13.0, 20.0}, "Transverse momentum Binning"};
   ConfigurableAxis centAxis{"centAxis", {VARIABLE_WIDTH, 0, 5, 10, 20, 30, 40, 50, 60, 70, 80, 100}, "Centrality interval"};
@@ -347,7 +346,7 @@ struct F0980pbpbanalysis {
     return 1;
   }
 
-  template<typename TrackType1, typename TrackType2>
+  template <typename TrackType1, typename TrackType2>
   bool indexSelection(const TrackType1 track1, const TrackType2 track2)
   {
     if (cfgTrackIndexSelType == IndexSelList::woSame) {
@@ -357,7 +356,7 @@ struct F0980pbpbanalysis {
     } else if (cfgTrackIndexSelType == IndexSelList::leq) {
       if (track2.globalIndex() <= track1.globalIndex()) {
         return 0;
-      } 
+      }
     }
     return 1;
   }
@@ -578,3 +577,4 @@ WorkflowSpec defineDataProcessing(ConfigContext const& cfgc)
   return WorkflowSpec{
     adaptAnalysisTask<F0980pbpbanalysis>(cfgc)};
 }
+ 
