@@ -584,7 +584,7 @@ struct F0980pbpbanalysis {
       //   } else if (trk1.sign() < 0 && trk2.sign() < 0) {
       //     histos.fill(HIST("hInvMass_f0980_MixedLSmm_EPA"), recoPtl.M(), recoPtl.Pt(), centrality, relPhiMix);
       //   }
-      }
+    }
     }
   }
   PROCESS_SWITCH(F0980pbpbanalysis, processEventMixing, "Process Event mixing", true);
