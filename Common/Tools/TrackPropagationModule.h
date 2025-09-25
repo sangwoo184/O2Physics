@@ -16,16 +16,32 @@
 #ifndef COMMON_TOOLS_TRACKPROPAGATIONMODULE_H_
 #define COMMON_TOOLS_TRACKPROPAGATIONMODULE_H_
 
-#include <memory>
-#include <cstdlib>
-#include <cmath>
-#include <array>
-#include <string>
-#include "Framework/AnalysisDataModel.h"
-#include "Framework/Configurable.h"
-#include "Framework/HistogramSpec.h"
+#include "Common/Core/TableHelper.h"
+#include "Common/Core/trackUtilities.h"
+#include "Common/DataModel/TrackSelectionTables.h"
 #include "Common/Tools/TrackTuner.h"
-#include "TableHelper.h"
+
+#include <CommonConstants/GeomConstants.h>
+#include <DetectorsBase/Propagator.h>
+#include <Framework/AnalysisDataModel.h>
+#include <Framework/AnalysisHelpers.h>
+#include <Framework/Configurable.h>
+#include <Framework/DataTypes.h>
+#include <Framework/HistogramRegistry.h>
+#include <Framework/HistogramSpec.h>
+#include <Framework/Logger.h>
+#include <ReconstructionDataFormats/DCA.h>
+#include <ReconstructionDataFormats/TrackParametrization.h>
+#include <ReconstructionDataFormats/TrackParametrizationWithError.h>
+
+#include <TH1.h>
+#include <TH2.h>
+
+#include <array>
+#include <cmath>
+#include <cstdlib>
+#include <memory>
+#include <string>
 
 //__________________________________________
 // track propagation module
@@ -81,17 +97,16 @@ class TrackPropagationModule
 
   // pointers to objs needed for operation
   std::shared_ptr<TH1> trackTunedTracks;
-  TrackTuner trackTunerObj;
 
   // Running variables
-  std::array<float, 2> mDcaInfo;
+  std::array<float, 2> mDcaInfo{};
   o2::dataformats::DCA mDcaInfoCov;
   o2::dataformats::VertexBase mVtx;
   o2::track::TrackParametrization<float> mTrackPar;
   o2::track::TrackParametrizationWithError<float> mTrackParCov;
 
   template <typename TConfigurableGroup, typename TInitContext, typename THistoRegistry>
-  void init(TConfigurableGroup const& cGroup, THistoRegistry& registry, TInitContext& initContext)
+  void init(TConfigurableGroup const& cGroup, TrackTuner& trackTunerObj, THistoRegistry& registry, TInitContext& initContext)
   {
     // Checking if the tables are requested in the workflow and enabling them
     fillTracks = isTableRequiredInWorkflow(initContext, "Tracks");
@@ -99,20 +114,35 @@ class TrackPropagationModule
     fillTracksDCA = isTableRequiredInWorkflow(initContext, "TracksDCA");
     fillTracksDCACov = isTableRequiredInWorkflow(initContext, "TracksDCACov");
 
+    // enable Tracks in case Tracks have been requested
+    if (fillTracksDCA && !fillTracks) {
+      LOGF(info, "******************************************************************");
+      LOGF(info, " There is no task subscribed to Tracks, but I have detected a");
+      LOGF(info, " subscription to TracksDCA. Now enabling tracks as algorithmic");
+      LOGF(info, " dependency. Note: please be sure this is intentional! For");
+      LOGF(info, " secondary analyses, the proper DCA to test against is the DCA");
+      LOGF(info, " that the V0 or Cascade is assigned to and not necessarily the");
+      LOGF(info, " the one that the Track is assigned to (if any). ");
+      LOGF(info, "******************************************************************");
+      fillTracks = true;
+    }
+
     if (!fillTracks) {
       LOGF(info, "Track propagation to PV not required. Suppressing all further processing and logs.");
     }
 
     LOGF(info, " Track propagation table detection results:");
-    LOGF(info, " ---> Will generate Tracks table.");
+    if (fillTracks) {
+      LOGF(info, " ---> Will generate Tracks table.");
+    }
     if (fillTracksCov) {
-      LOGF(info, "---> Will generate TracksCov table.");
+      LOGF(info, " ---> Will generate TracksCov table.");
     }
     if (fillTracksDCA) {
-      LOGF(info, "---> Will generate TracksDCA table.");
+      LOGF(info, " ---> Will generate TracksDCA table.");
     }
     if (fillTracksDCACov) {
-      LOGF(info, "---> Will generate TracksDCACov table.");
+      LOGF(info, " ---> Will generate TracksDCACov table.");
     }
     if (fillTracksCov) {
       LOGF(info, "**************************************************************");
@@ -154,7 +184,7 @@ class TrackPropagationModule
   }
 
   template <bool isMc, typename TConfigurableGroup, typename TCCDBLoader, typename TCollisions, typename TTracks, typename TOutputGroup, typename THistoRegistry>
-  void fillTrackTables(TConfigurableGroup const& cGroup, TCCDBLoader const& ccdbLoader, TCollisions const& collisions, TTracks const& tracks, TOutputGroup& cursors, THistoRegistry& registry)
+  void fillTrackTables(TConfigurableGroup const& cGroup, TrackTuner& trackTunerObj, TCCDBLoader const& ccdbLoader, TCollisions const& collisions, TTracks const& tracks, TOutputGroup& cursors, THistoRegistry& registry)
   {
     if (!fillTracks) {
       return; // suppress everything

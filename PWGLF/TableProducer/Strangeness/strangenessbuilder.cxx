@@ -644,6 +644,7 @@ struct StrangenessBuilder {
       histos.add("DeduplicationQA/hBestPA", "hBestPA", kTH1F, {{200, 0.0f, 0.4f}});
       histos.add("DeduplicationQA/hBestDCADau", "hBestDCADau", kTH1F, {{200, -10.0f, 10.0f}});
       histos.add("DeduplicationQA/hBestMLScore", "hBestMLScore", kTH1F, {{200, 0.0f, 1.0f}});
+      histos.add("DeduplicationQA/hPAOfBestMLScore", "hPAOfBestMLScore", kTH1F, {{200, 0.0f, 0.4f}});
     }
 
     auto hPrimaryV0s = histos.add<TH1>("hPrimaryV0s", "hPrimaryV0s", kTH1D, {{2, -0.5f, 1.5f}});
@@ -1001,8 +1002,10 @@ struct StrangenessBuilder {
       V0DuplicateExtras[bestPointingAngleIndex].isBestPA = true;
     if (bestDCADaughtersIndex != static_cast<size_t>(-1))
       V0DuplicateExtras[bestDCADaughtersIndex].isBestDCADau = true;
-    if (bestMLScoreIndex != static_cast<size_t>(-1))
+    if (bestMLScoreIndex != static_cast<size_t>(-1)) {
       V0DuplicateExtras[bestMLScoreIndex].isBestMLScore = true;
+      histos.fill(HIST("DeduplicationQA/hPAOfBestMLScore"), V0DuplicateExtras[bestMLScoreIndex].PA);
+    }
 
     // return vector with duplicates info
     return V0DuplicateExtras;
@@ -1648,7 +1651,8 @@ struct StrangenessBuilder {
 
           auto const& collision = collisions.rawIteratorAt(v0.collisionId);
           if (!mVDriftMgr.moveTPCTrack<TBCs, TCollisions>(collision, posTrack, posTrackPar)) {
-            return;
+            products.v0dataLink(-1, -1);
+            continue;
           }
         }
 
@@ -1660,7 +1664,8 @@ struct StrangenessBuilder {
 
           auto const& collision = collisions.rawIteratorAt(v0.collisionId);
           if (!mVDriftMgr.moveTPCTrack<TBCs, TCollisions>(collision, negTrack, negTrackPar)) {
-            return;
+            products.v0dataLink(-1, -1);
+            continue;
           }
         }
       }
@@ -1925,6 +1930,8 @@ struct StrangenessBuilder {
             }
           } // enabled tables check
         } // constexpr requires check
+      } else {
+        products.v0dataLink(-1, -1);
       }
     }
 

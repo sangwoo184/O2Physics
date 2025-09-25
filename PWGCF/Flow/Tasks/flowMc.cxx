@@ -67,6 +67,13 @@ struct FlowMc {
   O2_DEFINE_CONFIGURABLE(cfgCutITSclu, float, 5.0f, "minimum ITS clusters")
   O2_DEFINE_CONFIGURABLE(cfgCutChi2prTPCcls, float, 2.5f, "max chi2 per TPC clusters")
   O2_DEFINE_CONFIGURABLE(cfgCutTPCcrossedrows, float, 70.0f, "minimum TPC crossed rows")
+  O2_DEFINE_CONFIGURABLE(cfgCutDCAxy, float, 0.2f, "DCAxy cut for tracks")
+  O2_DEFINE_CONFIGURABLE(cfgDCAxyNSigma, float, 7, "Cut on number of sigma deviations from expected DCA in the transverse direction");
+  O2_DEFINE_CONFIGURABLE(cfgDCAxyFunction, std::string, "(0.0015+0.005/(x^1.1))", "Functional form of pt-dependent DCAxy cut");
+  O2_DEFINE_CONFIGURABLE(cfgCutDCAz, float, 2.0f, "DCAz cut for tracks")
+  O2_DEFINE_CONFIGURABLE(cfgCutDCAzPtDepEnabled, bool, false, "switch of DCAz pt dependent cut")
+  O2_DEFINE_CONFIGURABLE(cfgEnableITSCuts, bool, true, "switch of enabling ITS based track selection cuts")
+  O2_DEFINE_CONFIGURABLE(cfgTrkSelRun3ITSMatch, bool, false, "GlobalTrackRun3ITSMatching::Run3ITSall7Layers selection")
   O2_DEFINE_CONFIGURABLE(cfgFlowAcceptance, std::string, "", "CCDB path to acceptance object")
   O2_DEFINE_CONFIGURABLE(cfgFlowEfficiency, std::string, "", "CCDB path to efficiency object")
   O2_DEFINE_CONFIGURABLE(cfgCentVsIPTruth, std::string, "", "CCDB path to centrality vs IP truth")
@@ -80,6 +87,7 @@ struct FlowMc {
   O2_DEFINE_CONFIGURABLE(cfgRecoEvSel8, bool, false, "require sel8 for reconstruction events")
   O2_DEFINE_CONFIGURABLE(cfgRecoEvkIsGoodITSLayersAll, bool, false, "require kIsGoodITSLayersAll for reconstruction events")
   O2_DEFINE_CONFIGURABLE(cfgRecoEvkNoSameBunchPileup, bool, false, "require kNoSameBunchPileup for reconstruction events")
+  O2_DEFINE_CONFIGURABLE(cfgEvSelkIsGoodZvtxFT0vsPV, bool, false, "removes collisions with large differences between z of PV by tracks and z of PV from FT0 A-C time difference, use this cut at low multiplicities with caution")
   Configurable<std::vector<double>> cfgTrackDensityP0{"cfgTrackDensityP0", std::vector<double>{0.6003720411, 0.6152630970, 0.6288860646, 0.6360694031, 0.6409494798, 0.6450540203, 0.6482117301, 0.6512592056, 0.6640008690, 0.6862631416, 0.7005738691, 0.7106567432, 0.7170728333}, "parameter 0 for track density efficiency correction"};
   Configurable<std::vector<double>> cfgTrackDensityP1{"cfgTrackDensityP1", std::vector<double>{-1.007592e-05, -8.932635e-06, -9.114538e-06, -1.054818e-05, -1.220212e-05, -1.312304e-05, -1.376433e-05, -1.412813e-05, -1.289562e-05, -1.050065e-05, -8.635725e-06, -7.380821e-06, -6.201250e-06}, "parameter 1 for track density efficiency correction"};
   float maxEta = 0.8;
@@ -102,6 +110,10 @@ struct FlowMc {
   using FilteredTracks = soa::Filtered<soa::Join<aod::Tracks, aod::TracksExtra, aod::TrackSelection, aod::TracksDCA, aod::McTrackLabels>>;
 
   // using FilteredTracks = soa::Join<aod::TracksIU, aod::TracksExtra, aod::TrackSelection>;
+
+  // Additional filters for tracks
+  TrackSelection myTrackSel;
+  TF1* fPtDepDCAxy = nullptr;
 
   // Cent vs IP
   TH1D* mCentVsIPTruth = nullptr;
@@ -247,6 +259,28 @@ struct FlowMc {
       fGFWReco->CreateRegions();
     }
 
+    if (cfgEnableITSCuts) {
+      if (cfgTrkSelRun3ITSMatch) {
+        myTrackSel = getGlobalTrackSelectionRun3ITSMatch(TrackSelection::GlobalTrackRun3ITSMatching::Run3ITSall7Layers, TrackSelection::GlobalTrackRun3DCAxyCut::Default);
+      } else {
+        myTrackSel = getGlobalTrackSelectionRun3ITSMatch(TrackSelection::GlobalTrackRun3ITSMatching::Run3ITSibAny, TrackSelection::GlobalTrackRun3DCAxyCut::Default);
+      }
+    }
+    if (cfgCutDCAxy != 0.0) {
+      myTrackSel.SetMaxDcaXY(cfgCutDCAxy);
+    } else {
+      fPtDepDCAxy = new TF1("ptDepDCAxy", Form("[0]*%s", cfgDCAxyFunction->c_str()), 0.001, 100);
+      fPtDepDCAxy->SetParameter(0, cfgDCAxyNSigma);
+      LOGF(info, "DCAxy pt-dependence function: %s", Form("[0]*%s", cfgDCAxyFunction->c_str()));
+      myTrackSel.SetMaxDcaXYPtDep([fPtDepDCAxy = this->fPtDepDCAxy](float pt) { return fPtDepDCAxy->Eval(pt); });
+    }
+    myTrackSel.SetMinNClustersTPC(cfgCutTPCclu);
+    myTrackSel.SetMinNCrossedRowsTPC(cfgCutTPCcrossedrows);
+    if (cfgEnableITSCuts)
+      myTrackSel.SetMinNClustersITS(cfgCutITSclu);
+    if (!cfgCutDCAzPtDepEnabled)
+      myTrackSel.SetMaxDcaZ(cfgCutDCAz);
+
     if (cfgTrackDensityCorrUse) {
       std::vector<double> pTEffBins = {0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.4, 1.8, 2.2, 2.6, 3.0};
       hFindPtBin = new TH1D("hFindPtBin", "hFindPtBin", pTEffBins.size() - 1, &pTEffBins[0]);
@@ -372,13 +406,21 @@ struct FlowMc {
       // cut time intervals with dead ITS staves
       return 0;
     }
+    if (cfgEvSelkIsGoodZvtxFT0vsPV && !collision.selection_bit(o2::aod::evsel::kIsGoodZvtxFT0vsPV)) {
+      // removes collisions with large differences between z of PV by tracks and z of PV from FT0 A-C time difference
+      // use this cut at low multiplicities with caution
+      return 0;
+    }
     return 1;
   }
 
   template <typename TTrack>
   bool trackSelected(TTrack track)
   {
-    return ((track.tpcNClsFound() >= cfgCutTPCclu) && (track.tpcNClsCrossedRows() >= cfgCutTPCcrossedrows) && (track.itsNCls() >= cfgCutITSclu));
+    if (cfgCutDCAzPtDepEnabled && (track.dcaZ() > (0.004f + 0.013f / track.pt()))) {
+      return false;
+    }
+    return myTrackSel.IsSelected(track);
   }
 
   void process(FilteredMcCollisions::iterator const& mcCollision, aod::BCsWithTimestamps const&, soa::SmallGroups<soa::Join<aod::McCollisionLabels, aod::Collisions, aod::EvSels>> const& collisions, FilteredMcParticles const& mcParticles, FilteredTracks const&)

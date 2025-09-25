@@ -36,6 +36,7 @@
 #include "Framework/RunningWorkflowInfo.h"
 #include "Framework/runDataProcessing.h"
 #include <CCDB/BasicCCDBManager.h>
+#include <DataFormatsParameters/GRPMagField.h>
 
 #include "TList.h"
 #include <TF1.h>
@@ -119,13 +120,38 @@ struct FlowTask {
     Configurable<std::vector<double>> cfgMultT0CCutPars{"cfgMultT0CCutPars", std::vector<double>{143.04, -4.58368, 0.0766055, -0.000727796, 2.86153e-06, 23.3108, -0.36304, 0.00437706, -4.717e-05, 1.98332e-07}, "Global multiplicity vs T0C centrality cut parameter values"};
     O2_DEFINE_CONFIGURABLE(cfgMultPVT0CCutEnabled, bool, false, "Enable PV multiplicity vs T0C centrality cut")
     Configurable<std::vector<double>> cfgMultPVT0CCutPars{"cfgMultPVT0CCutPars", std::vector<double>{195.357, -6.15194, 0.101313, -0.000955828, 3.74793e-06, 30.0326, -0.43322, 0.00476265, -5.11206e-05, 2.13613e-07}, "PV multiplicity vs T0C centrality cut parameter values"};
-    O2_DEFINE_CONFIGURABLE(cfgMultMultHighCutFunction, std::string, "[0]+[1]*x + 5.*([2]+[3]*x)", "Functional for multiplicity correlation cut");
-    O2_DEFINE_CONFIGURABLE(cfgMultMultLowCutFunction, std::string, "[0]+[1]*x - 5.*([2]+[3]*x)", "Functional for multiplicity correlation cut");
+    O2_DEFINE_CONFIGURABLE(cfgMultMultPVHighCutFunction, std::string, "[0]+[1]*x + 5.*([2]+[3]*x)", "Functional for multiplicity correlation cut");
+    O2_DEFINE_CONFIGURABLE(cfgMultMultPVLowCutFunction, std::string, "[0]+[1]*x - 5.*([2]+[3]*x)", "Functional for multiplicity correlation cut");
     O2_DEFINE_CONFIGURABLE(cfgMultGlobalPVCutEnabled, bool, false, "Enable global multiplicity vs PV multiplicity cut")
     Configurable<std::vector<double>> cfgMultGlobalPVCutPars{"cfgMultGlobalPVCutPars", std::vector<double>{-0.140809, 0.734344, 2.77495, 0.0165935}, "PV multiplicity vs T0C centrality cut parameter values"};
+    O2_DEFINE_CONFIGURABLE(cfgMultMultV0AHighCutFunction, std::string, "[0] + [1]*x + [2]*x*x + [3]*x*x*x + [4]*x*x*x*x + 4.*([5] + [6]*x + [7]*x*x + [8]*x*x*x + [9]*x*x*x*x)", "Functional for multiplicity correlation cut");
+    O2_DEFINE_CONFIGURABLE(cfgMultMultV0ALowCutFunction, std::string, "[0] + [1]*x + [2]*x*x + [3]*x*x*x + [4]*x*x*x*x - 3.*([5] + [6]*x + [7]*x*x + [8]*x*x*x + [9]*x*x*x*x)", "Functional for multiplicity correlation cut");
+    O2_DEFINE_CONFIGURABLE(cfgMultMultV0ACutEnabled, bool, false, "Enable global multiplicity vs V0A multiplicity cut")
+    Configurable<std::vector<double>> cfgMultMultV0ACutPars{"cfgMultMultV0ACutPars", std::vector<double>{534.893, 184.344, 0.423539, -0.00331436, 5.34622e-06, 871.239, 53.3735, -0.203528, 0.000122758, 5.41027e-07}, "Global multiplicity vs V0A multiplicity cut parameter values"};
     std::vector<double> multT0CCutPars;
     std::vector<double> multPVT0CCutPars;
     std::vector<double> multGlobalPVCutPars;
+    std::vector<double> multMultV0ACutPars;
+    TF1* fMultPVT0CCutLow = nullptr;
+    TF1* fMultPVT0CCutHigh = nullptr;
+    TF1* fMultT0CCutLow = nullptr;
+    TF1* fMultT0CCutHigh = nullptr;
+    TF1* fMultGlobalPVCutLow = nullptr;
+    TF1* fMultGlobalPVCutHigh = nullptr;
+    TF1* fMultMultV0ACutLow = nullptr;
+    TF1* fMultMultV0ACutHigh = nullptr;
+    TF1* fT0AV0AMean = nullptr;
+    TF1* fT0AV0ASigma = nullptr;
+    // for TPC sector boundary
+    O2_DEFINE_CONFIGURABLE(cfgShowTPCsectorOverlap, bool, true, "Draw TPC sector overlap")
+    O2_DEFINE_CONFIGURABLE(cfgRejectionTPCsectorOverlap, bool, false, "rejection for TPC sector overlap")
+    O2_DEFINE_CONFIGURABLE(cfgMagnetField, std::string, "GLO/Config/GRPMagField", "CCDB path to Magnet field object")
+    ConfigurableAxis axisPhiMod{"axisPhiMod", {100, 0, constants::math::PI / 9}, "fmod(#varphi,#pi/9)"};
+    O2_DEFINE_CONFIGURABLE(cfgTPCPhiCutLowCutFunction, std::string, "0.1/x-0.005", "Function for TPC mod phi-pt cut");
+    O2_DEFINE_CONFIGURABLE(cfgTPCPhiCutHighCutFunction, std::string, "0.1/x+0.01", "Function for TPC mod phi-pt cut");
+    O2_DEFINE_CONFIGURABLE(cfgTPCPhiCutPtMin, float, 2.0f, "start point of phi-pt cut")
+    TF1* fPhiCutLow = nullptr;
+    TF1* fPhiCutHigh = nullptr;
   } cfgFuncParas;
 
   ConfigurableAxis axisPtHist{"axisPtHist", {100, 0., 10.}, "pt axis for histograms"};
@@ -198,16 +224,6 @@ struct FlowTask {
   TF1* funcV3;
   TF1* funcV4;
 
-  // Additional Event selection cuts - Copy from flowGenericFramework.cxx
-  TF1* fMultPVT0CCutLow = nullptr;
-  TF1* fMultPVT0CCutHigh = nullptr;
-  TF1* fMultT0CCutLow = nullptr;
-  TF1* fMultT0CCutHigh = nullptr;
-  TF1* fMultGlobalPVCutLow = nullptr;
-  TF1* fMultGlobalPVCutHigh = nullptr;
-  TF1* fT0AV0AMean = nullptr;
-  TF1* fT0AV0ASigma = nullptr;
-
   void init(InitContext const&)
   {
     const AxisSpec axisVertex{40, -20, 20, "Vtxz (cm)"};
@@ -246,11 +262,11 @@ struct FlowTask {
     registry.add("hVtxZ", "Vexter Z distribution", {HistType::kTH1D, {axisVertex}});
     registry.add("hMult", "Multiplicity distribution", {HistType::kTH1D, {{3000, 0.5, 3000.5}}});
     std::string hCentTitle = "Centrality distribution, Estimator " + std::to_string(cfgCentEstimator);
-    registry.add("hCent", hCentTitle.c_str(), {HistType::kTH1D, {{90, 0, 90}}});
+    registry.add("hCent", hCentTitle.c_str(), {HistType::kTH1D, {{100, 0, 100}}});
     if (doprocessMCGen) {
       registry.add("MCGen/MChVtxZ", "Vexter Z distribution", {HistType::kTH1D, {axisVertex}});
       registry.add("MCGen/MChMult", "Multiplicity distribution", {HistType::kTH1D, {{3000, 0.5, 3000.5}}});
-      registry.add("MCGen/MChCent", hCentTitle.c_str(), {HistType::kTH1D, {{90, 0, 90}}});
+      registry.add("MCGen/MChCent", hCentTitle.c_str(), {HistType::kTH1D, {{100, 0, 100}}});
     }
     if (!cfgUseSmallMemory) {
       registry.add("BeforeSel8_globalTracks_centT0C", "before sel8;Centrality T0C;mulplicity global tracks", {HistType::kTH2D, {axisCentForQA, axisNch}});
@@ -278,6 +294,8 @@ struct FlowTask {
     registry.add("hEta", "#eta distribution", {HistType::kTH1D, {axisEta}});
     registry.add("hPt", "p_{T} distribution before cut", {HistType::kTH1D, {axisPtHist}});
     registry.add("hPtRef", "p_{T} distribution after cut", {HistType::kTH1D, {axisPtHist}});
+    registry.add("pt_phi_bef", "before cut;p_{T};#phi_{modn}", {HistType::kTH2D, {axisPt, cfgFuncParas.axisPhiMod}});
+    registry.add("pt_phi_aft", "after cut;p_{T};#phi_{modn}", {HistType::kTH2D, {axisPt, cfgFuncParas.axisPhiMod}});
     registry.add("hChi2prTPCcls", "#chi^{2}/cluster for the TPC track segment", {HistType::kTH1D, {{100, 0., 5.}}});
     registry.add("hChi2prITScls", "#chi^{2}/cluster for the ITS track", {HistType::kTH1D, {{100, 0., 50.}}});
     registry.add("hnTPCClu", "Number of found TPC clusters", {HistType::kTH1D, {{100, 40, 180}}});
@@ -469,25 +487,36 @@ struct FlowTask {
       cfgFuncParas.multT0CCutPars = cfgFuncParas.cfgMultT0CCutPars;
       cfgFuncParas.multPVT0CCutPars = cfgFuncParas.cfgMultPVT0CCutPars;
       cfgFuncParas.multGlobalPVCutPars = cfgFuncParas.cfgMultGlobalPVCutPars;
-      fMultPVT0CCutLow = new TF1("fMultPVT0CCutLow", cfgFuncParas.cfgMultCentLowCutFunction->c_str(), 0, 100);
-      fMultPVT0CCutLow->SetParameters(&(cfgFuncParas.multPVT0CCutPars[0]));
-      fMultPVT0CCutHigh = new TF1("fMultPVT0CCutHigh", cfgFuncParas.cfgMultCentHighCutFunction->c_str(), 0, 100);
-      fMultPVT0CCutHigh->SetParameters(&(cfgFuncParas.multPVT0CCutPars[0]));
+      cfgFuncParas.multMultV0ACutPars = cfgFuncParas.cfgMultMultV0ACutPars;
+      cfgFuncParas.fMultPVT0CCutLow = new TF1("fMultPVT0CCutLow", cfgFuncParas.cfgMultCentLowCutFunction->c_str(), 0, 100);
+      cfgFuncParas.fMultPVT0CCutLow->SetParameters(&(cfgFuncParas.multPVT0CCutPars[0]));
+      cfgFuncParas.fMultPVT0CCutHigh = new TF1("fMultPVT0CCutHigh", cfgFuncParas.cfgMultCentHighCutFunction->c_str(), 0, 100);
+      cfgFuncParas.fMultPVT0CCutHigh->SetParameters(&(cfgFuncParas.multPVT0CCutPars[0]));
 
-      fMultT0CCutLow = new TF1("fMultT0CCutLow", cfgFuncParas.cfgMultCentLowCutFunction->c_str(), 0, 100);
-      fMultT0CCutLow->SetParameters(&(cfgFuncParas.multT0CCutPars[0]));
-      fMultT0CCutHigh = new TF1("fMultT0CCutHigh", cfgFuncParas.cfgMultCentHighCutFunction->c_str(), 0, 100);
-      fMultT0CCutHigh->SetParameters(&(cfgFuncParas.multT0CCutPars[0]));
+      cfgFuncParas.fMultT0CCutLow = new TF1("fMultT0CCutLow", cfgFuncParas.cfgMultCentLowCutFunction->c_str(), 0, 100);
+      cfgFuncParas.fMultT0CCutLow->SetParameters(&(cfgFuncParas.multT0CCutPars[0]));
+      cfgFuncParas.fMultT0CCutHigh = new TF1("fMultT0CCutHigh", cfgFuncParas.cfgMultCentHighCutFunction->c_str(), 0, 100);
+      cfgFuncParas.fMultT0CCutHigh->SetParameters(&(cfgFuncParas.multT0CCutPars[0]));
 
-      fMultGlobalPVCutLow = new TF1("fMultGlobalPVCutLow", cfgFuncParas.cfgMultMultLowCutFunction->c_str(), 0, 4000);
-      fMultGlobalPVCutLow->SetParameters(&(cfgFuncParas.multGlobalPVCutPars[0]));
-      fMultGlobalPVCutHigh = new TF1("fMultGlobalPVCutHigh", cfgFuncParas.cfgMultMultHighCutFunction->c_str(), 0, 4000);
-      fMultGlobalPVCutHigh->SetParameters(&(cfgFuncParas.multGlobalPVCutPars[0]));
+      cfgFuncParas.fMultGlobalPVCutLow = new TF1("fMultGlobalPVCutLow", cfgFuncParas.cfgMultMultPVLowCutFunction->c_str(), 0, 4000);
+      cfgFuncParas.fMultGlobalPVCutLow->SetParameters(&(cfgFuncParas.multGlobalPVCutPars[0]));
+      cfgFuncParas.fMultGlobalPVCutHigh = new TF1("fMultGlobalPVCutHigh", cfgFuncParas.cfgMultMultPVHighCutFunction->c_str(), 0, 4000);
+      cfgFuncParas.fMultGlobalPVCutHigh->SetParameters(&(cfgFuncParas.multGlobalPVCutPars[0]));
 
-      fT0AV0AMean = new TF1("fT0AV0AMean", "[0]+[1]*x", 0, 200000);
-      fT0AV0AMean->SetParameters(-1601.0581, 9.417652e-01);
-      fT0AV0ASigma = new TF1("fT0AV0ASigma", "[0]+[1]*x+[2]*x*x+[3]*x*x*x+[4]*x*x*x*x", 0, 200000);
-      fT0AV0ASigma->SetParameters(463.4144, 6.796509e-02, -9.097136e-07, 7.971088e-12, -2.600581e-17);
+      cfgFuncParas.fMultMultV0ACutLow = new TF1("fMultMultV0ACutLow", cfgFuncParas.cfgMultMultV0ALowCutFunction->c_str(), 0, 4000);
+      cfgFuncParas.fMultMultV0ACutLow->SetParameters(&(cfgFuncParas.multMultV0ACutPars[0]));
+      cfgFuncParas.fMultMultV0ACutHigh = new TF1("fMultMultV0ACutHigh", cfgFuncParas.cfgMultMultV0AHighCutFunction->c_str(), 0, 4000);
+      cfgFuncParas.fMultMultV0ACutHigh->SetParameters(&(cfgFuncParas.multMultV0ACutPars[0]));
+
+      cfgFuncParas.fT0AV0AMean = new TF1("fT0AV0AMean", "[0]+[1]*x", 0, 200000);
+      cfgFuncParas.fT0AV0AMean->SetParameters(-1601.0581, 9.417652e-01);
+      cfgFuncParas.fT0AV0ASigma = new TF1("fT0AV0ASigma", "[0]+[1]*x+[2]*x*x+[3]*x*x*x+[4]*x*x*x*x", 0, 200000);
+      cfgFuncParas.fT0AV0ASigma->SetParameters(463.4144, 6.796509e-02, -9.097136e-07, 7.971088e-12, -2.600581e-17);
+    }
+
+    if (cfgFuncParas.cfgShowTPCsectorOverlap) {
+      cfgFuncParas.fPhiCutLow = new TF1("fPhiCutLow", cfgFuncParas.cfgTPCPhiCutLowCutFunction->c_str(), 0, 100);
+      cfgFuncParas.fPhiCutHigh = new TF1("fPhiCutHigh", cfgFuncParas.cfgTPCPhiCutHighCutFunction->c_str(), 0, 100);
     }
 
     if (cfgTrackDensityCorrUse) {
@@ -682,21 +711,27 @@ struct FlowTask {
 
     if (cfgEvSelMultCorrelation) {
       if (cfgFuncParas.cfgMultPVT0CCutEnabled) {
-        if (multNTracksPV < fMultPVT0CCutLow->Eval(centrality))
+        if (multNTracksPV < cfgFuncParas.fMultPVT0CCutLow->Eval(centrality))
           return 0;
-        if (multNTracksPV > fMultPVT0CCutHigh->Eval(centrality))
+        if (multNTracksPV > cfgFuncParas.fMultPVT0CCutHigh->Eval(centrality))
           return 0;
       }
       if (cfgFuncParas.cfgMultT0CCutEnabled) {
-        if (multTrk < fMultT0CCutLow->Eval(centrality))
+        if (multTrk < cfgFuncParas.fMultT0CCutLow->Eval(centrality))
           return 0;
-        if (multTrk > fMultT0CCutHigh->Eval(centrality))
+        if (multTrk > cfgFuncParas.fMultT0CCutHigh->Eval(centrality))
           return 0;
       }
       if (cfgFuncParas.cfgMultGlobalPVCutEnabled) {
-        if (multTrk < fMultGlobalPVCutLow->Eval(multNTracksPV))
+        if (multTrk < cfgFuncParas.fMultGlobalPVCutLow->Eval(multNTracksPV))
           return 0;
-        if (multTrk > fMultGlobalPVCutHigh->Eval(multNTracksPV))
+        if (multTrk > cfgFuncParas.fMultGlobalPVCutHigh->Eval(multNTracksPV))
+          return 0;
+      }
+      if (cfgFuncParas.cfgMultMultV0ACutEnabled) {
+        if (collision.multFV0A() < cfgFuncParas.fMultMultV0ACutLow->Eval(multTrk))
+          return 0;
+        if (collision.multFV0A() > cfgFuncParas.fMultMultV0ACutHigh->Eval(multTrk))
           return 0;
       }
     }
@@ -705,7 +740,7 @@ struct FlowTask {
 
     // V0A T0A 5 sigma cut
     float sigma = 5.0;
-    if (cfgEvSelV0AT0ACut && (std::fabs(collision.multFV0A() - fT0AV0AMean->Eval(collision.multFT0A())) > sigma * fT0AV0ASigma->Eval(collision.multFT0A())))
+    if (cfgEvSelV0AT0ACut && (std::fabs(collision.multFV0A() - cfgFuncParas.fT0AV0AMean->Eval(collision.multFT0A())) > sigma * cfgFuncParas.fT0AV0ASigma->Eval(collision.multFT0A())))
       return 0;
     if (cfgEvSelV0AT0ACut)
       registry.fill(HIST("hEventCountSpecific"), 11.5);
@@ -713,10 +748,47 @@ struct FlowTask {
     return 1;
   }
 
+  int getMagneticField(uint64_t timestamp)
+  {
+    static o2::parameters::GRPMagField* grpo = nullptr;
+    if (grpo == nullptr) {
+      grpo = ccdb->getForTimeStamp<o2::parameters::GRPMagField>(cfgFuncParas.cfgMagnetField, timestamp);
+      if (grpo == nullptr) {
+        LOGF(fatal, "GRP object not found in %s for timestamp %llu", cfgFuncParas.cfgMagnetField.value.c_str(), timestamp);
+        return 0;
+      }
+      LOGF(info, "Retrieved GRP from %s for timestamp %llu with magnetic field of %d kG", cfgFuncParas.cfgMagnetField.value.c_str(), timestamp, grpo->getNominalL3Field());
+    }
+    return grpo->getNominalL3Field();
+  }
+
   template <typename TTrack>
   bool trackSelected(TTrack track)
   {
     return ((track.tpcNClsFound() >= cfgCutTPCclu) && (track.tpcNClsCrossedRows() >= cfgCutTPCCrossedRows) && (track.itsNCls() >= cfgCutITSclu));
+  }
+
+  template <typename TTrack>
+  bool rejectionTPCoverlap(TTrack track, const int field)
+  {
+    double phimodn = track.phi();
+    if (field < 0) // for negative polarity field
+      phimodn = o2::constants::math::TwoPI - phimodn;
+    if (track.sign() < 0) // for negative charge
+      phimodn = o2::constants::math::TwoPI - phimodn;
+    if (phimodn < 0)
+      LOGF(warning, "phi < 0: %g", phimodn);
+
+    float middle = o2::constants::math::TwoPI / 18.0;
+    phimodn += middle; // to center gap in the middle
+    phimodn = fmod(phimodn, o2::constants::math::TwoPI / 9.0);
+    registry.fill(HIST("pt_phi_bef"), track.pt(), phimodn);
+    if (cfgFuncParas.cfgRejectionTPCsectorOverlap) {
+      if (track.pt() >= cfgFuncParas.cfgTPCPhiCutPtMin && phimodn < cfgFuncParas.fPhiCutHigh->Eval(track.pt()) && phimodn > cfgFuncParas.fPhiCutLow->Eval(track.pt()))
+        return false; // reject track
+    }
+    registry.fill(HIST("pt_phi_aft"), track.pt(), phimodn);
+    return true;
   }
 
   void initHadronicRate(aod::BCsWithTimestamps::iterator const& bc)
@@ -827,9 +899,14 @@ struct FlowTask {
     // track weights
     float weff = 1, wacc = 1;
     double nTracksCorrected = 0;
+    int magnetfield = 0;
     float independent = cent;
     if (cfgUseNch)
       independent = static_cast<float>(tracks.size());
+    if (cfgFuncParas.cfgShowTPCsectorOverlap) {
+      // magnet field dependence cut
+      magnetfield = getMagneticField(bc.timestamp());
+    }
 
     double psi2Est = 0, psi3Est = 0, psi4Est = 0;
     float wEPeff = 1;
@@ -861,6 +938,8 @@ struct FlowTask {
 
     for (const auto& track : tracks) {
       if (!trackSelected(track))
+        continue;
+      if (cfgFuncParas.cfgShowTPCsectorOverlap && !rejectionTPCoverlap(track, magnetfield))
         continue;
       bool withinPtPOI = (cfgCutPtPOIMin < track.pt()) && (track.pt() < cfgCutPtPOIMax); // within POI pT range
       bool withinPtRef = (cfgCutPtRefMin < track.pt()) && (track.pt() < cfgCutPtRefMax); // within RF pT range

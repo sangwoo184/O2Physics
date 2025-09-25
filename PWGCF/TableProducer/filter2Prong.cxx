@@ -102,6 +102,7 @@ struct Filter2Prong {
     O2_DEFINE_CONFIGURABLE(cutTOFBeta, float, 0.5, "TOF beta");
     O2_DEFINE_CONFIGURABLE(confFakeKaonCut, float, 0.15, "Cut based on track from momentum difference");
     O2_DEFINE_CONFIGURABLE(removefaketrack, bool, true, "Flag to remove fake kaon");
+    O2_DEFINE_CONFIGURABLE(applyTOF, bool, false, "Flag for applying TOF");
   } grpPhi;
 
   HfHelper hfHelper;
@@ -115,9 +116,12 @@ struct Filter2Prong {
 
   using HFCandidates = soa::Join<aod::HfCand2Prong, aod::HfSelD0>;
   using HFCandidatesML = soa::Join<aod::HfCand2Prong, aod::HfSelD0, aod::HfMlD0>;
+  using HFCandidatesMCRecoML = soa::Join<aod::HfCand2Prong, aod::HfCand2ProngMcRec, aod::HfSelD0, aod::HfMlD0>;
 
   template <class T>
   using HasMLProb = decltype(std::declval<T&>().mlProbD0());
+  template <class T>
+  using HasFlagMcMatchRec = decltype(std::declval<T&>().flagMcMatchRec());
 
   using PIDTrack = soa::Join<aod::Tracks, aod::TracksExtra, aod::TrackSelection, aod::pidTPCPi, aod::pidTPCKa, aod::pidTPCPr, aod::pidTOFPi, aod::pidTOFKa, aod::pidTOFPr, aod::pidTOFbeta, aod::TracksDCA>;
   using ResoV0s = aod::V0Datas;
@@ -170,6 +174,10 @@ struct Filter2Prong {
         continue;
       if (cfgYMax >= 0.0f && std::abs(hfHelper.yD0(c)) > cfgYMax)
         continue;
+      if constexpr (std::experimental::is_detected<HasFlagMcMatchRec, typename HFCandidatesType::iterator>::value) {
+        if (std::abs(c.flagMcMatchRec()) != o2::hf_decay::hf_cand_2prong::DecayChannelMain::D0ToPiK)
+          continue;
+      }
 
       if (c.isSelD0() > 0) {
         output2ProngTracks(cfcollisions.begin().globalIndex(),
@@ -213,6 +221,12 @@ struct Filter2Prong {
   }
   PROCESS_SWITCH(Filter2Prong, processData, "Process data D0 candidates", true);
 
+  void processMCRecoML(aod::Collisions::iterator const& col, aod::BCsWithTimestamps const& bcs, aod::CFCollRefs const& cfcollisions, aod::CFTrackRefs const& cftracks, HFCandidatesMCRecoML const& candidates)
+  {
+    processDataT(col, bcs, cfcollisions, cftracks, candidates);
+  }
+  PROCESS_SWITCH(Filter2Prong, processMCRecoML, "Process data D0 candidates together with reco information and ML", false);
+
   using HFMCTrack = soa::Join<aod::McParticles, aod::HfCand2ProngMcGen>;
   void processMC(aod::McCollisions::iterator const&, aod::CFMcParticleRefs const& cfmcparticles, [[maybe_unused]] HFMCTrack const& mcparticles)
   {
@@ -233,10 +247,33 @@ struct Filter2Prong {
         }
       }
       output2ProngMcParts(prongCFId[0], prongCFId[1],
-                          (mcParticle.pdgCode() >= 0 ? aod::cf2prongtrack::D0ToPiK : aod::cf2prongtrack::D0barToKPi) | ((mcParticle.originMcGen() & RecoDecay::OriginType::Prompt) ? aod::cf2prongmcpart::Prompt : 0));
+                          (mcParticle.pdgCode() >= 0 ? aod::cf2prongtrack::D0ToPiK : aod::cf2prongtrack::D0barToKPi) | ((mcParticle.originMcGen() == RecoDecay::OriginType::Prompt) ? aod::cf2prongmcpart::Prompt : 0));
     }
   }
   PROCESS_SWITCH(Filter2Prong, processMC, "Process MC 2-prong daughters", false);
+
+  void processMCGeneric(aod::McCollisions::iterator const&, aod::CFMcParticleRefs const& cfmcparticles, [[maybe_unused]] aod::McParticles const& mcparticles)
+  {
+    // The main filter outputs the primary MC particles. Here we just resolve the daughter indices that are needed for the efficiency matching.
+    for (const auto& r : cfmcparticles) {
+      const auto& mcParticle = r.mcParticle();
+      if (mcParticle.daughtersIds().size() != 2) {
+        output2ProngMcParts(-1, -1, aod::cf2prongtrack::Generic2Prong); // not a 2-prong
+        continue;
+      }
+      int prongCFId[2] = {-1, -1};
+      for (uint i = 0; i < 2; ++i) {
+        for (const auto& cfmcpart : cfmcparticles) {
+          if (mcParticle.daughtersIds()[i] == cfmcpart.mcParticleId()) {
+            prongCFId[i] = cfmcpart.globalIndex();
+            break;
+          }
+        }
+      }
+      output2ProngMcParts(prongCFId[0], prongCFId[1], aod::cf2prongtrack::Generic2Prong); // the 2-prong Phi, for example, can be checked through its daughters
+    }
+  }
+  PROCESS_SWITCH(Filter2Prong, processMCGeneric, "Process generic MC 2-prong daughters", false);
 
   template <typename T>
   bool selectionTrack(const T& candidate)
@@ -396,6 +433,79 @@ struct Filter2Prong {
     return false;
   }
 
+  template <typename T>
+  bool selectionPID2(const T& candidate)
+  {
+    double nsigmaTPC = candidate.tpcNSigmaKa();
+    double nsigmaTOF = candidate.tofNSigmaKa();
+
+    if (grpPhi.applyTOF) {
+      if (!candidate.hasTOF() && TMath::Abs(nsigmaTPC) < grpPhi.nsigmaCutTPC) {
+        return true;
+      }
+      if (candidate.p() > 0.5 && candidate.hasTOF() && TMath::Abs(nsigmaTPC) < grpPhi.nsigmaCutTPC) {
+        if (candidate.p() > 0.5 && candidate.p() < 1.6 && candidate.beta() > grpPhi.cutTOFBeta && nsigmaTOF > -5.0 && nsigmaTOF < 10.0) {
+          return true;
+        }
+        if (candidate.p() >= 1.6 && candidate.p() < 2.0 && candidate.beta() > grpPhi.cutTOFBeta && nsigmaTOF > -3.0 && nsigmaTOF < 10.0) {
+          return true;
+        }
+        if (candidate.p() >= 2.0 && candidate.p() < 2.5 && candidate.beta() > grpPhi.cutTOFBeta && nsigmaTOF > -3.0 && nsigmaTOF < 6.0) {
+          return true;
+        }
+        if (candidate.p() >= 2.5 && candidate.p() < 4.0 && candidate.beta() > grpPhi.cutTOFBeta && nsigmaTOF > -2.5 && nsigmaTOF < 4.0) {
+          return true;
+        }
+        if (candidate.p() >= 4.0 && candidate.p() < 5.0 && candidate.beta() > grpPhi.cutTOFBeta && nsigmaTOF > -4.0 && nsigmaTOF < 3.0) {
+          return true;
+        }
+        if (candidate.p() >= 5.0 && candidate.p() < 6.0 && candidate.beta() > grpPhi.cutTOFBeta && nsigmaTOF > -4.0 && nsigmaTOF < 2.5) {
+          return true;
+        }
+        if (candidate.p() >= 6.0 && candidate.beta() > grpPhi.cutTOFBeta && nsigmaTOF > -3.0 && nsigmaTOF < 3.0) {
+          return true;
+        }
+      }
+    } else if (TMath::Abs(nsigmaTPC) < grpPhi.nsigmaCutTPC) {
+      return true;
+    }
+    return false;
+  }
+
+  template <typename T>
+  bool selectionPID3(const T& candidate)
+  {
+    double nsigmaTPC = candidate.tpcNSigmaKa();
+    double nsigmaTOF = candidate.tofNSigmaKa();
+    if (candidate.p() < 0.7 && TMath::Abs(nsigmaTPC) < grpPhi.nsigmaCutTPC) {
+      return true;
+    }
+    if (candidate.p() > 0.7 && candidate.hasTOF() && TMath::Abs(nsigmaTPC) < grpPhi.nsigmaCutTPC) {
+      if (candidate.p() > 0.7 && candidate.p() < 1.6 && candidate.beta() > grpPhi.cutTOFBeta && nsigmaTOF > -5.0 && nsigmaTOF < 10.0) {
+        return true;
+      }
+      if (candidate.p() >= 1.6 && candidate.p() < 2.0 && candidate.beta() > grpPhi.cutTOFBeta && nsigmaTOF > -3.0 && nsigmaTOF < 10.0) {
+        return true;
+      }
+      if (candidate.p() >= 2.0 && candidate.p() < 2.5 && candidate.beta() > grpPhi.cutTOFBeta && nsigmaTOF > -3.0 && nsigmaTOF < 6.0) {
+        return true;
+      }
+      if (candidate.p() >= 2.5 && candidate.p() < 4.0 && candidate.beta() > grpPhi.cutTOFBeta && nsigmaTOF > -2.5 && nsigmaTOF < 4.0) {
+        return true;
+      }
+      if (candidate.p() >= 4.0 && candidate.p() < 5.0 && candidate.beta() > grpPhi.cutTOFBeta && nsigmaTOF > -4.0 && nsigmaTOF < 3.0) {
+        return true;
+      }
+      if (candidate.p() >= 5.0 && candidate.p() < 6.0 && candidate.beta() > grpPhi.cutTOFBeta && nsigmaTOF > -4.0 && nsigmaTOF < 2.5) {
+        return true;
+      }
+      if (candidate.p() >= 6.0 && candidate.beta() > grpPhi.cutTOFBeta && nsigmaTOF > -3.0 && nsigmaTOF < 3.0) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   // Generic 2-prong invariant mass method candidate finder. Only works for non-identical daughters of opposite charge for now.
   void processDataInvMass(aod::Collisions::iterator const&, aod::BCsWithTimestamps const&, aod::CFCollRefs const& cfcollisions, aod::CFTrackRefs const& cftracks, Filter2Prong::PIDTrack const& tracks)
   {
@@ -494,9 +604,9 @@ struct Filter2Prong {
       if (grpPhi.ITSPIDSelection && p1.p() < grpPhi.ITSPIDPthreshold.value && !(itsResponse.nSigmaITS<o2::track::PID::Kaon>(p1) > grpPhi.lowITSPIDNsigma.value && itsResponse.nSigmaITS<o2::track::PID::Kaon>(p1) < grpPhi.highITSPIDNsigma.value)) { // Check ITS PID condition
         continue;
       }
-      if (!selectionPID(p1)) {
+      /*if (!selectionPID(p1)) {
         continue;
-      }
+  }*/
       if (grpPhi.removefaketrack && isFakeTrack(p1)) { // Check if the track is a fake kaon
         continue;
       }
@@ -512,9 +622,9 @@ struct Filter2Prong {
         if (!selectionTrack(p2)) {
           continue;
         }
-        if (!selectionPID(p2)) {
+        /*if (!selectionPID(p2)) {
           continue;
-        }
+    }*/
         if (grpPhi.ITSPIDSelection && p2.p() < grpPhi.ITSPIDPthreshold.value && !(itsResponse.nSigmaITS<o2::track::PID::Kaon>(p2) > grpPhi.lowITSPIDNsigma.value && itsResponse.nSigmaITS<o2::track::PID::Kaon>(p2) < grpPhi.highITSPIDNsigma.value)) { // Check ITS PID condition
           continue;
         }
@@ -532,8 +642,18 @@ struct Filter2Prong {
           continue;
         }
         float phi = RecoDecay::constrainAngle(s.Phi(), 0.0f);
-        output2ProngTracks(cfcollisions.begin().globalIndex(),
-                           cftrack1.globalIndex(), cftrack2.globalIndex(), s.pt(), s.eta(), phi, s.M(), aod::cf2prongtrack::PhiToKK);
+        if (selectionPID(p1) && selectionPID(p2)) {
+          output2ProngTracks(cfcollisions.begin().globalIndex(),
+                             cftrack1.globalIndex(), cftrack2.globalIndex(), s.pt(), s.eta(), phi, s.M(), aod::cf2prongtrack::PhiToKKPID1);
+        }
+        if (selectionPID2(p1) && selectionPID2(p2)) {
+          output2ProngTracks(cfcollisions.begin().globalIndex(),
+                             cftrack1.globalIndex(), cftrack2.globalIndex(), s.pt(), s.eta(), phi, s.M(), aod::cf2prongtrack::PhiToKKPID2);
+        }
+        if (selectionPID3(p1) && selectionPID3(p2)) {
+          output2ProngTracks(cfcollisions.begin().globalIndex(),
+                             cftrack1.globalIndex(), cftrack2.globalIndex(), s.pt(), s.eta(), phi, s.M(), aod::cf2prongtrack::PhiToKKPID3);
+        }
       } // end of loop over second track
     } // end of loop over first track
   }
@@ -638,7 +758,7 @@ struct Filter2Prong {
         }
         float phi = RecoDecay::constrainAngle(s.Phi(), 0.0f);
         output2ProngTracks(cfcollisions.begin().globalIndex(),
-                           cftrack1.globalIndex(), cftrack2.globalIndex(), s.pt(), s.eta(), phi, s.M(), aod::cf2prongtrack::PhiToKK);
+                           cftrack1.globalIndex(), cftrack2.globalIndex(), s.pt(), s.eta(), phi, s.M(), aod::cf2prongtrack::PhiToKKPID1);
       } // end of loop over second track
     } // end of loop over first track
   }

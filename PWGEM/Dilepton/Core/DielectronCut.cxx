@@ -67,12 +67,13 @@ void DielectronCut::SelectPhotonConversion(bool flag)
   mSelectPC = flag;
   LOG(info) << "Dielectron Cut, select photon conversion: " << mSelectPC;
 }
-void DielectronCut::SetMindEtadPhi(bool flag, float min_deta, float min_dphi)
+void DielectronCut::SetMindEtadPhi(bool flag1, bool flag2, float min_deta, float min_dphi)
 {
-  mApplydEtadPhi = flag;
+  mApplydEtadPhi = flag1;
+  mApplydEtadPhiPosition = flag2;
   mMinDeltaEta = min_deta;
   mMinDeltaPhi = min_dphi;
-  LOG(info) << "Dielectron Cut, set apply deta-dphi cut: " << mApplydEtadPhi << " min_deta: " << mMinDeltaEta << " min_dphi: " << mMinDeltaPhi;
+  LOG(info) << "Dielectron Cut, set apply deta-dphi cut: " << mApplydEtadPhi << " apply deta-dphi* cut: " << mApplydEtadPhiPosition << " min_deta: " << mMinDeltaEta << " min_dphi: " << mMinDeltaPhi;
 }
 void DielectronCut::SetRequireDifferentSides(bool flag)
 {
@@ -323,11 +324,6 @@ void DielectronCut::SetTOFNsigmaPrRange(float min, float max)
 //   LOG(info) << "Dielectron Cut, set p range for ITS n sigma Pr: " << mMinP_ITSNsigmaPr << " - " << mMaxP_ITSNsigmaPr;
 // }
 
-void DielectronCut::SetMaxPinMuonTPConly(float max)
-{
-  mMaxPinMuonTPConly = max;
-  LOG(info) << "Dielectron Cut, set max pin for Muon ID with TPC only: " << mMaxPinMuonTPConly;
-}
 void DielectronCut::SetPinRangeForPionRejectionTPC(float min, float max)
 {
   mMinPinForPionRejectionTPC = min;
