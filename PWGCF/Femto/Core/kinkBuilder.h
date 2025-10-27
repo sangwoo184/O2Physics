@@ -37,6 +37,7 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <numeric>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -92,7 +93,7 @@ struct ConfSigmaBits : o2::framework::ConfigurableGroup {
   o2::framework::Configurable<float> phiMax{"phiMax", 1.f * o2::constants::math::TwoPI, "Maximum phi"};      \
   o2::framework::Configurable<float> massMin{"massMin", defaultMassMin, "Minimum invariant mass for Sigma"}; \
   o2::framework::Configurable<float> massMax{"massMax", defaultMassMax, "Maximum invariant mass for Sigma"}; \
-  o2::framework::Configurable<o2::aod::femtodatatypes::KinkMaskType> mask{"mask", 0, "Bitmask for kink selection"};
+  o2::framework::Configurable<o2::aod::femtodatatypes::KinkMaskType> mask{"mask", 0x0, "Bitmask for kink selection"};
 
 // base selection for analysis task for sigmas
 template <const char* Prefix>
@@ -242,7 +243,7 @@ class KinkSelection : public BaseSelection<float, o2::aod::femtodatatypes::KinkM
     float pt = std::hypot(px, py);
     float p = std::sqrt(px * px + py * py + pz * pz);
     float eta = (p > 0.f) ? 0.5f * std::log((p + pz) / (p - pz)) : 0.f;
-    float phi = std::atan2(py, px);
+    float phi = RecoDecay::constrainAngle(std::atan2(py, px));
 
     return ((pt > mPtMin && pt < mPtMax) &&
             (eta > mEtaMin && eta < mEtaMax) &&
@@ -371,7 +372,7 @@ class KinkBuilder
       float pt = std::hypot(px, py);
       float p = std::sqrt(px * px + py * py + pz * pz);
       float eta = (p > 0.f) ? 0.5f * std::log((p + pz) / (p - pz)) : 0.f;
-      float phi = std::atan2(py, px);
+      float phi = RecoDecay::constrainAngle(std::atan2(py, px));
 
       kinkProducts.producedSigmas(collisionProducts.producedCollision.lastIndex(),
                                   kink.mothSign() * pt,
